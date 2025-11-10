@@ -1,0 +1,143 @@
+﻿@page "/"
+
+<PageTitle>Measles Tracker | Home</PageTitle>
+<br />
+<div class="alert alert-success" role="alert">
+    <h3 style="text-align:center">U.S. Measles Tracker</h3>
+</div>
+<div>
+    <h3>Tracking Measles Cases in the U.S.</h3>
+    @if (lastUpdated is null)
+    {
+        <p>Loading last update...</p>
+    }
+    else
+    {
+        <p><strong>Last updated on GitHub:</strong> @lastUpdated.Value.ToLocalTime()</p>
+    }
+</div>
+<br />
+@if (isLoading)
+{
+    <div class="text-center m-5">
+        <button class="btn btn-primary">
+            <span class="spinner-border spinner-border-sm"></span>
+            Loading...
+        </button>
+    </div>
+}
+else if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="toast show" style="width:400px; height:200px">
+        <div class="toast-header">
+            Error Message
+            <button type="button" class="btn-close" data-bs-dismiss="toast" OnClick="@(() => errorMessage = null)"></button>
+        </div>
+        <div class="toast-body">
+            <strong>Error:</strong> <p>@errorMessage</p>
+        </div>
+    </div>
+}
+else
+{
+    <div class="mb-3">
+        <input type="text" class="form-control" placeholder="Search by location..."
+               @bind="SearchTerm" @bind:event="oninput" />
+    </div>
+    <div class="row row-cols-1 row-cols-md-3 g-4">
+        @foreach (var item in filteredLocations)
+        {
+            <div class="col">
+                <div class="card shadow-sm border-0 h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">@item.LocationName</h5>
+                        <p class="card-text">
+                            <strong>Total Count:</strong> @item.TotalValue
+                        </p>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+
+@code {
+    public DateTime? lastUpdated;
+    private List<MeaslesData> data = new();
+    private List<LocationSummary> allLocations = new();
+    private List<LocationSummary> filteredLocations = new();
+    private string searchTerm = string.Empty;
+
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            isLoading = true;
+            await Task.Delay(2000);
+            lastUpdated = await _githubService.GetRepoLastUpdatedAsync();
+            if (lastUpdated == null)
+            {
+                Console.WriteLine("GitHub repo date unavailable.");
+            }
+            data = await _csvDataService.GetMeaslesDataAsync();
+
+            allLocations = data
+                .Where(r => !string.IsNullOrEmpty(r.location_name) && r.value.HasValue)
+                .GroupBy(r => r.location_name)
+                .Select(g => new LocationSummary
+                {
+                    LocationName = g.Key,
+                    TotalValue = g.Sum(x => x.value ?? 0)
+                })
+                .OrderByDescending(x => x.TotalValue)
+                .ToList();
+
+            filteredLocations = allLocations;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load data. Details: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string SearchTerm
+    {
+        get => searchTerm;
+        set
+        {
+            if (searchTerm == value) return;
+            searchTerm = value;
+            ApplyFilter();
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            filteredLocations = allLocations;
+        }
+        else
+        {
+            filteredLocations = allLocations
+                .Where(x => x.LocationName?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) == true)
+                .ToList();
+        }
+
+        StateHasChanged();
+    }
+
+    private class LocationSummary
+    {
+        public string LocationName { get; set; }
+        public double TotalValue { get; set; }
+    }
+}
